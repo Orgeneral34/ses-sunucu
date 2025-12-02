@@ -9,22 +9,24 @@
     </style>
 </head>
 <body>
-    <h1>Ses Yayını</h1>
+    <h1>Ses Yayını (Düşük Gecikme Modu)</h1>
     <p>Sesi duymak için butona basmalısın.</p>
-    <button id="playBtn">Yayını Başlat / Durdur</button>
+    <button id="playBtn">Yayını Başlat</button>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io();
         let audioCtx;
         let nextTime = 0;
-        let isPlaying = false;
+        
+        // ÖNEMLİ: C# tarafındaki SampleRate ile AYNI olmalı (16000)
+        const SAMPLE_RATE = 16000; 
 
         document.getElementById('playBtn').addEventListener('click', async () => {
             if (!audioCtx) {
+                // Tarayıcının kendi hızı neyse onu kullanır (genelde 44.1k veya 48k)
                 audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                isPlaying = true;
-                document.getElementById('playBtn').innerText = "Çalıyor...";
+                document.getElementById('playBtn').innerText = "Bağlandı - Dinleniyor...";
                 document.getElementById('playBtn').style.background = "green";
             } else if (audioCtx.state === 'suspended') {
                 await audioCtx.resume();
@@ -32,30 +34,35 @@
         });
 
         socket.on('play-audio', (arrayBuffer) => {
-            if (!isPlaying || !audioCtx) return;
+            if (!audioCtx) return;
 
-            // Gelen ham veriyi (PCM 16-bit, 44.1kHz, Mono) sese çevir
+            // 1. Gelen Veriyi İşle (Int16 -> Float32)
             const int16Array = new Int16Array(arrayBuffer);
             const float32Array = new Float32Array(int16Array.length);
 
-            // PCM 16-bit -> Float dönüşümü (-1.0 ile 1.0 arası)
             for (let i = 0; i < int16Array.length; i++) {
-                float32Array[i] = int16Array[i] / 32768;
+                float32Array[i] = int16Array[i] / 32768; // Normalize et (-1.0 ile 1.0 arası)
             }
 
-            const audioBuffer = audioCtx.createBuffer(1, float32Array.length, 44100);
+            // 2. Ses Buffer'ı Oluştur (16000 Hz olduğunu burada belirtiyoruz)
+            const audioBuffer = audioCtx.createBuffer(1, float32Array.length, SAMPLE_RATE);
             audioBuffer.getChannelData(0).set(float32Array);
 
+            // 3. Oynatma Zamanlaması (Jitter Buffer Mantığı)
             const source = audioCtx.createBufferSource();
             source.buffer = audioBuffer;
             source.connect(audioCtx.destination);
 
-            // Kesintisiz oynatma için zamanlama mantığı
+            // Eğer nextTime geçmişte kaldıysa (takılma olduysa),
+            // zamanı "şu an + küçük bir gecikme" olarak sıfırla.
             if (nextTime < audioCtx.currentTime) {
-                nextTime = audioCtx.currentTime;
+                nextTime = audioCtx.currentTime + 0.10; // 100ms tampon payı bırak
             }
+
             source.start(nextTime);
-            nextTime += source.buffer.duration;
+            
+            // Bir sonraki parçanın başlama zamanını ayarla
+            nextTime += audioBuffer.duration;
         });
     </script>
 </body>
