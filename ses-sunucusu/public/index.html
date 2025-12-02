@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <title>Ses Alıcısı</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding-top: 50px; background: #222; color: #fff; }
+        button { padding: 15px 30px; font-size: 20px; cursor: pointer; background: #007bff; border: none; color: white; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <h1>Ses Yayını</h1>
+    <p>Sesi duymak için butona basmalısın.</p>
+    <button id="playBtn">Yayını Başlat / Durdur</button>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let audioCtx;
+        let nextTime = 0;
+        let isPlaying = false;
+
+        document.getElementById('playBtn').addEventListener('click', async () => {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                isPlaying = true;
+                document.getElementById('playBtn').innerText = "Çalıyor...";
+                document.getElementById('playBtn').style.background = "green";
+            } else if (audioCtx.state === 'suspended') {
+                await audioCtx.resume();
+            }
+        });
+
+        socket.on('play-audio', (arrayBuffer) => {
+            if (!isPlaying || !audioCtx) return;
+
+            // Gelen ham veriyi (PCM 16-bit, 44.1kHz, Mono) sese çevir
+            const int16Array = new Int16Array(arrayBuffer);
+            const float32Array = new Float32Array(int16Array.length);
+
+            // PCM 16-bit -> Float dönüşümü (-1.0 ile 1.0 arası)
+            for (let i = 0; i < int16Array.length; i++) {
+                float32Array[i] = int16Array[i] / 32768;
+            }
+
+            const audioBuffer = audioCtx.createBuffer(1, float32Array.length, 44100);
+            audioBuffer.getChannelData(0).set(float32Array);
+
+            const source = audioCtx.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(audioCtx.destination);
+
+            // Kesintisiz oynatma için zamanlama mantığı
+            if (nextTime < audioCtx.currentTime) {
+                nextTime = audioCtx.currentTime;
+            }
+            source.start(nextTime);
+            nextTime += source.buffer.duration;
+        });
+    </script>
+</body>
+</html>
